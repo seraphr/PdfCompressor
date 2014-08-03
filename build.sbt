@@ -50,7 +50,7 @@ lazy val sandbox = Project(
     name := "sandbox",
     resolvers += "apache.snapshots" at "http://repository.apache.org/snapshots/",
     libraryDependencies ++= COMMON_DEPENDENCIES ++ Seq(
-      "org.apache.pdfbox" % "pdfbox" % "1.8.2",
+      "org.apache.pdfbox" % "pdfbox" % "1.8.6",
       "org.apache.commons" % "commons-imaging" % "1.0-SNAPSHOT",
       "com.wapmx.native" % "mx-native-loader" % "1.8")
   )
