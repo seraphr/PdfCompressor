@@ -13,13 +13,15 @@ import org.apache.pdfbox.cos.COSBase
 import org.apache.pdfbox.cos.COSName
 import scala.collection.mutable.ListBuffer
 import org.apache.pdfbox.util.Matrix
+import org.apache.pdfbox.pdmodel.graphics.PDGraphicsState
 
 object ImageLoadSample {
 
   def main(args: Array[String]): Unit = {
     import scala.collection.JavaConverters._
 
-    val tFile = "FruitBasket_17.pdf"
+    val tFile = "FruitBasket_17_acrobat_compressed.pdf"
+    //    val tFile = "FruitBasket_17.pdf"
 
     val tStream = new FileInputStream("src/main/resources/" + tFile)
     val tParser = new PDFParser(tStream)
@@ -31,10 +33,23 @@ object ImageLoadSample {
     val tPages = tPdf.getDocumentCatalog().getAllPages().asScala.toSeq.asInstanceOf[Seq[PDPage]]
 
     val tImages = tPages.flatMap { tPage =>
-      new MyStreamEngine map { tEngine =>
-        tEngine.processStream(tPage, tPage.findResources(), tPage.getContents().getStream())
-        tEngine.result
+      val tImageMap = tPage.getResources.getImages
+      tImageMap.asScala.map {
+        case (_, tImage) =>
+          val tWidth = tImage.getWidth
+          val tHeight = tImage.getHeight
+          val tCropBox = tPage.findCropBox
+          val tGraphicsState = new PDGraphicsState(tPage.findCropBox())
+          //          val tDpi = calcDpi(tGraphicsState.getCurrentTransformationMatrix(), tHeight, tImage)
+          val tDpi = Dpi(tWidth * 72 / tCropBox.getWidth(), tHeight * 72 / tCropBox.getHeight())
+
+          (tImage, tDpi)
       }
+
+      //      new MyStreamEngine map { tEngine =>
+      //        tEngine.processStream(tPage, tPage.findResources(), tPage.getContents().getStream())
+      //        tEngine.result
+      //      }
     }
 
     //    val tImages = tPages.flatMap { tPage =>
@@ -49,12 +64,45 @@ object ImageLoadSample {
     println(s"tImages size = ${tImageCount}")
     tImages.take(10).zipWithIndex.foreach {
       case ((tImage, tDpi), tIndex) =>
-        println(s"${tIndex}/${tImageCount} ${tDpi}")
+        println(s"${tIndex + 1}/${tImageCount} ${tDpi}")
 
         tImage.write2file(f"out/${tFile}-${tIndex}%03d")
     }
 
     println("owata")
+
+  }
+
+  def calcDpi(aCtm: Matrix, aPageHeight: Double, aImage: PDXObjectImage): Dpi = {
+    val tYScale = aCtm.getYScale()
+    val tImageWidth = aImage.getWidth()
+    val tImageHeight = aImage.getHeight()
+
+    val tAngleCoefficient =
+      if (aCtm.getValue(0, 1) < 0 && aCtm.getValue(1, 0) > 0)
+        -1
+      else
+        1
+
+    val angle = tAngleCoefficient * Math.acos(aCtm.getValue(0, 0) / aCtm.getXScale());
+    println(s"angle = ${angle}  yScale=${tYScale}")
+
+    aCtm.setValue(2, 1, (aPageHeight - aCtm.getYPosition() - Math.cos(angle) * tYScale).asInstanceOf[Float]);
+    aCtm.setValue(2, 0, (aCtm.getXPosition() - Math.sin(angle) * tYScale).asInstanceOf[Float]);
+    aCtm.setValue(0, 1, (-1) * aCtm.getValue(0, 1));
+    aCtm.setValue(1, 0, (-1) * aCtm.getValue(1, 0));
+
+    val ctmAT = aCtm.createAffineTransform();
+    ctmAT.scale(1f / tImageWidth, 1f / tImageHeight);
+
+    println(aCtm)
+
+    val imageXScale = aCtm.getXScale();
+    val imageYScale = aCtm.getYScale();
+
+    val (tWidthInch, tHeightInch) = (imageXScale / 72, imageYScale / 72)
+
+    Dpi(tImageWidth / tWidthInch, tImageHeight / tHeightInch)
   }
 
   case class Dpi(x: Double, y: Double)
@@ -65,38 +113,6 @@ object ImageLoadSample {
     private val mListBuffer = new ListBuffer[(PDXObjectImage, Dpi)]
 
     def result = mListBuffer.toList
-
-    def calcDpi(aCtm: Matrix, aPageHeight: Double, aImage: PDXObjectImage): Dpi = {
-      val tYScale = aCtm.getYScale()
-      val tImageWidth = aImage.getWidth()
-      val tImageHeight = aImage.getHeight()
-
-      val tAngleCoefficient =
-        if (aCtm.getValue(0, 1) < 0 && aCtm.getValue(1, 0) > 0)
-          -1
-        else
-          1
-
-      val angle = tAngleCoefficient * Math.acos(aCtm.getValue(0, 0) / aCtm.getXScale());
-      println(s"angle = ${angle}  yScale=${tYScale}")
-
-      aCtm.setValue(2, 1, (aPageHeight - aCtm.getYPosition() - Math.cos(angle) * tYScale).asInstanceOf[Float]);
-      aCtm.setValue(2, 0, (aCtm.getXPosition() - Math.sin(angle) * tYScale).asInstanceOf[Float]);
-      aCtm.setValue(0, 1, (-1) * aCtm.getValue(0, 1));
-      aCtm.setValue(1, 0, (-1) * aCtm.getValue(1, 0));
-
-      val ctmAT = aCtm.createAffineTransform();
-      ctmAT.scale(1f / tImageWidth, 1f / tImageHeight);
-
-      println(aCtm)
-
-      val imageXScale = aCtm.getXScale();
-      val imageYScale = aCtm.getYScale();
-
-      val (tWidthInch, tHeightInch) = (imageXScale / 72, imageYScale / 72)
-
-      Dpi(tImageWidth / tWidthInch, tImageHeight / tHeightInch)
-    }
 
     override def processOperator(operator: PDFOperator, arguments: JList[COSBase]): Unit = {
       val operation = operator.getOperation();
@@ -117,12 +133,11 @@ object ImageLoadSample {
               val height = image.getHeight()
               val ctmNew = getGraphicsState().getCurrentTransformationMatrix()
 
-              calcDpi(ctmNew, page.getMediaBox().getHeight(), image)
-
               val tCropBox = page.findCropBox()
 
-//              val tDpi = Dpi(width * 72 / tCropBox.getWidth(), height * 72 / tCropBox.getHeight())
-              val tDpi = calcDpi(ctmNew, page.getMediaBox().getHeight(), image)
+              println(s"image class is ${xobject.getClass}")
+              val tDpi = Dpi(width * 72 / tCropBox.getWidth(), height * 72 / tCropBox.getHeight())
+              //              val tDpi = calcDpi(ctmNew, page.getMediaBox().getHeight(), image)
 
               (image, tDpi)
           }
